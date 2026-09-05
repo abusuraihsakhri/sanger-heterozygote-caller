@@ -77,9 +77,15 @@ def parse_ab1(record) -> TraceData:
     object exposing the same ``annotations["abif_raw"]`` mapping of raw ABIF
     tags, which is convenient for constructing test fixtures).
     """
-    raw = record.annotations["abif_raw"]
+    try:
+        raw = record.annotations["abif_raw"]
+    except (AttributeError, KeyError) as exc:
+        raise ValueError(f"Record is missing required 'abif_raw' annotation: {exc}") from exc
 
-    base_order = raw["FWO_1"]
+    try:
+        base_order = raw["FWO_1"]
+    except KeyError as exc:
+        raise ValueError(f"ABIF raw data is missing required 'FWO_1' (base order) tag: {exc}") from exc
     if isinstance(base_order, bytes):
         base_order = base_order.decode("ascii")
 

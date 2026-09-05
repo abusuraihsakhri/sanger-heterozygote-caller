@@ -63,7 +63,9 @@ def build_parser() -> argparse.ArgumentParser:
 def _load_reference(spec: str) -> str:
     """Load a reference sequence from a FASTA/plain-text file path, or treat `spec` as raw sequence."""
     if os.path.isfile(spec):
-        with open(spec) as handle:
+        # Resolve to absolute, normalized path to prevent traversal surprises.
+        abs_path = os.path.realpath(spec)
+        with open(abs_path) as handle:
             text = handle.read()
         if text.lstrip().startswith(">"):
             lines = text.splitlines()[1:]

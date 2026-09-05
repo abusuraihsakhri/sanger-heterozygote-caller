@@ -3,12 +3,14 @@ Automated Pytest Test Suite for Sanger Heterozygote Caller.
 Domain: Clinical & Biomedical AI
 Standard: CAP / CLSI / ISO Standards
 """
+import os
 import sys
+import warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from agents.base import PHIGuard, AuditLogger, SecurityException
+from agents.base import PHIGuard, AuditLogger, SecurityException, AuditTrail
 from agents.models import SystemTaskPayload, UrgencyLevel, SystemIntegrityStatus
 from agents.workers import InvariantQCWorker, SafetyEscalationWorker, ProtocolConformanceWorker
 from agents.supervisor import SystemSupervisor
@@ -63,3 +65,63 @@ def test_supervisor_consensus_and_audit():
     assert main(["audit", "--task-id", "CLI-TEST-01"]) == 0
     assert main(["chat", "Explain", "specifications"]) == 0
     assert main(["verify-audit"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# Security & reliability tests (added by improvement pass)
+# ---------------------------------------------------------------------------
+
+def test_audit_trail_uses_ephemeral_key_without_env():
+    """When AUDIT_SECRET_KEY is unset, a random key is used (not a hardcoded default)."""
+    saved = os.environ.pop("AUDIT_SECRET_KEY", None)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            trail = AuditTrail()
+        assert len(trail.secret_key) > 0
+        # Key should differ between instances (random)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            trail2 = AuditTrail()
+        assert trail.secret_key != trail2.secret_key
+    finally:
+        if saved is not None:
+            os.environ["AUDIT_SECRET_KEY"] = saved
+
+
+def test_audit_trail_uses_env_key_when_set():
+    """When AUDIT_SECRET_KEY is set, it is used directly."""
+    os.environ["AUDIT_SECRET_KEY"] = "test-key-12345"
+    try:
+        trail = AuditTrail()
+        assert trail.secret_key == b"test-key-12345"
+    finally:
+        os.environ.pop("AUDIT_SECRET_KEY", None)
+
+
+def test_audit_trail_explicit_key_overrides_env():
+    """An explicit secret_key argument takes precedence over the env var."""
+    os.environ["AUDIT_SECRET_KEY"] = "env-key"
+    try:
+        trail = AuditTrail(secret_key="explicit-key")
+        assert trail.secret_key == b"explicit-key"
+    finally:
+        os.environ.pop("AUDIT_SECRET_KEY", None)
+
+
+def test_phi_guard_redacts_multiple_patterns():
+    """PHIGuard.redact_phi should replace all PHI matches with a redaction marker."""
+    text = "Patient John Doe, MRN-123456, SSN 123-45-6789, email test@example.com"
+    redacted = PHIGuard.redact_phi(text)
+    assert "John Doe" not in redacted
+    assert "MRN" not in redacted
+    assert "123-45-6789" not in redacted
+    assert "test@example.com" not in redacted
+    assert "[REDACTED_IDENTIFIER]" in redacted
+
+
+def test_phi_guard_empty_and_none_safe():
+    """Empty strings and None-like input should not raise."""
+    PHIGuard.assert_no_phi("")
+    PHIGuard.assert_no_phi("   ")
+    PHIGuard.assert_no_phi("ACGTACGT")  # pure sequence

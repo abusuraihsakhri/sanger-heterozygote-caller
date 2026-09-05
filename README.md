@@ -1,7 +1,7 @@
 # Sanger Heterozygote Caller
 
 > **Domain:** Clinical Decision Support & Biomedical Computing  
-> **Reference Guidelines & Standards:** `Standard Clinical Formulations & ISO/IEC Quality Frameworks`
+> **Standards:** CAP / CLSI / ISO Quality Frameworks
 
 <div align="center">
 
@@ -18,74 +18,113 @@
 
 ## 📖 What It Does
 
-Entry point: run as `python sanger_het_caller.py <file.ab1> [options]`.
+Sanger Heterozygote Caller flags heterozygous and low-level mosaic positions in Sanger `.ab1` chromatograms using a secondary-to-primary fluorescence peak-height ratio heuristic (similar to Mutation Surveyor / Poly Peak Parser). It also provides an enterprise multi-agent supervision layer with HMAC-SHA256 audit trails and zero-PHI outbound guards.
+
+### Two Entry Points
+
+1. **Core algorithm** — call heterozygote positions from an `.ab1` file:
+   ```bash
+   python -m het_caller.cli <file.ab1> [options]
+   ```
+
+2. **Enterprise CLI** — multi-agent task evaluation, batch processing, and REST API:
+   ```bash
+   python cli.py <command> [options]
+   ```
 
 ---
 
-## ⚙️ Key Capabilities & Algorithmic Modules
+## ⚙️ Core Algorithm (`het_caller/`)
 
-- **Deterministic Calculation Engine**: Strict compliance with standard reference formulations and thresholds.
-- **Risk & Urgency Classification**: Multi-tier categorization with automated clinical/operational action recommendations.
-- **Validation & Guardrails**: Rigorous input bounds checking and anomaly detection.
+Implements the peak-ratio heuristic described by Hill et al., *BioTechniques* 2014:
+
+- **Four-channel trace parsing** from ABIF `DATA9-12` tags.
+- **Peak detection** with a configurable window around each called base.
+- **Heterozygote flagging** when a secondary channel exceeds `threshold` × primary height.
+- **IUPAC ambiguity code** assignment (e.g. `R` = A/G, `Y` = C/T).
+- **Reference alignment** (BioPython `PairwiseAligner`) for reporting variants in reference coordinates.
+- **Quality summary** with estimated signal-to-noise ratio.
+
+### Parameters
+
+| Flag | Description | Default |
+|:-----|:------------|:--------|
+| `ab1_file` | Path to input `.ab1` chromatogram | (required) |
+| `--threshold` | Min secondary/primary ratio to flag | 0.25 |
+| `--window` | +/- samples around peak for local max | 2 |
+| `--min-quality` | Ignore bases below this Phred score | 0 (off) |
+| `--reference` | FASTA file or raw sequence to align against | None |
+| `--context` | Flanking bases shown around variants | 5 |
+| `--output` | Write JSON report to file | stdout text |
+
+### Example
+
+```bash
+python -m het_caller.cli sample.ab1 --threshold 0.25 --window 2 --reference ref.fasta --output report.json
+```
 
 ---
 
-## 💻 CLI Quickstart & Usage
+## ⚙️ Enterprise CLI (`cli.py`)
 
-### 1. Guided Interactive Mode
+### Commands
+
+| Command | Description |
+|:--------|:------------|
+| `audit` | Run single task evaluation with multi-agent consensus |
+| `chat` | Query the supervisory chat interface |
+| `batch` | Batch process CSV records |
+| `verify-audit` | Verify HMAC audit trail integrity |
+| `serve` | Launch FastAPI REST server |
+
+### Examples
+
 ```bash
-python cli.py
+# Single task evaluation
+python cli.py audit --task-id TASK-001 --primary 28.5 --secondary 14.2 --critical
+
+# Supervisory chat
+python cli.py chat "Explain the current protocol status"
+
+# Batch processing
+python cli.py batch -i input.csv -o results.csv
+
+# Verify audit integrity
+python cli.py verify-audit
+
+# Start REST server
+python cli.py serve --host 127.0.0.1 --port 8000
 ```
-
-### 2. Direct Parameterized Evaluation
-```bash
-python cli.py --task-id <value> --target <value> --primary <value> --secondary <value>
-```
-
-### Parameter Reference
-- `--task-id`: Specifies input measurement or parameter value.
-- `--target`: Specifies input measurement or parameter value.
-- `--primary`: Specifies input measurement or parameter value.
-- `--secondary`: Specifies input measurement or parameter value.
-- `--critical`: Specifies input measurement or parameter value.
-- `--status`: Specifies input measurement or parameter value.
-- `--input`: Specifies input measurement or parameter value.
-- `--output`: Specifies input measurement or parameter value.
-
-### Input Data Schema
-
-| Field | Description | Requirement |
-|:------|:------------|:------------|
-| `suite_name` | Parameter / observation metric | Required |
-| `system_slug` | Parameter / observation metric | Required |
-| `standard_reference` | Parameter / observation metric | Required |
-| `test_cases` | Parameter / observation metric | Required |
 
 ---
 
 ## 🛡️ Security & Enterprise Architecture
 
-* **Zero-PHI Outbound Interceptor:** Active AST and regex inspection blocking SSNs, MRNs, phone numbers, and patient identifiers.
-* **Tamper-Evident HMAC-SHA256 Audit Trail:** Chained, cryptographically signed logs for every evaluation and state transition.
-* **Air-Gapped LLM Reasoning Adapter:** Agnostic integration for local Ollama instances (`llama3`, `mistral`), Claude 3.5 Sonnet, GPT-4o, and deterministic test mocks.
-* **Active Learning Bayesian Calibration:** Dynamic tracker updating worker reliability weights and monitoring Brier calibration drift.
-* **FastAPI & Prometheus Telemetry:** Exposes OpenAPI 3.1 REST endpoints and operational Prometheus metrics (`/metrics`).
+* **Zero-PHI Outbound Interceptor:** Active regex inspection blocking SSNs, MRNs, phone numbers, emails, DOBs, and patient identifiers.
+* **Tamper-Evident HMAC-SHA256 Audit Trail:** Chained, cryptographically signed logs for every evaluation.
+* **Configurable Audit Secret:** Set `AUDIT_SECRET_KEY` environment variable in production; ephemeral key generated at runtime with a warning if unset.
+* **Path Traversal Protection:** Reference file paths are resolved to absolute paths before access.
 
 ---
 
 ## 🧪 Testing & Verification
 
-Run the automated test suite:
+Run the full test suite:
 
 ```bash
 pytest -v
 ```
 
-Execute high-throughput batch simulation benchmarks:
-
-```bash
-python simulator.py --tasks 1000 --concurrency 8
-```
+This executes 18 tests covering:
+- IUPAC code assignment
+- Peak calling and heterozygote flagging
+- Trace quality summary
+- AB1 parsing with fallbacks
+- Reference alignment and variant mapping
+- PHI guard enforcement
+- Multi-agent worker evaluation
+- Supervisor consensus and audit integrity
+- Enrichment suite execution
 
 ---
 
@@ -93,5 +132,54 @@ python simulator.py --tasks 1000 --concurrency 8
 
 ```bash
 docker build -t sanger-heterozygote-caller .
-docker run -p 8000:8000 sanger-heterozygote-caller
+docker run -p 8000:8000 -e AUDIT_SECRET_KEY=<your-secret> sanger-heterozygote-caller
 ```
+
+Or with Docker Compose:
+
+```bash
+AUDIT_SECRET_KEY=<your-secret> docker-compose up
+```
+
+---
+
+## 📦 Dependencies
+
+- `biopython>=1.80` — ABIF trace parsing, sequence alignment
+- `numpy>=1.24` — numerical array operations
+- `pydantic>=2.0` — data models (enterprise CLI)
+- `fastapi`, `uvicorn` — REST API server
+- `pytest` — test suite
+
+---
+
+## 📁 Project Structure
+
+```
+sanger-heterozygote-caller/
+├── het_caller/           # Core algorithm package
+│   ├── core.py           # Peak-ratio calling, AB1 parsing, alignment
+│   └── cli.py            # Core algorithm CLI
+├── agents/               # Enterprise multi-agent framework
+│   ├── base.py           # PHI guard, HMAC audit trail
+│   ├── models.py         # Pydantic data models
+│   ├── workers.py        # Domain worker agents
+│   ├── supervisor.py     # Consensus orchestrator
+│   ├── api.py            # FastAPI endpoints
+│   └── ...
+├── cli.py                # Enterprise CLI entry point
+├── enrichment.py         # Batch screening & enrichment engines
+├── simulator.py          # High-throughput simulation
+├── tests/                # Pytest test suite
+├── test_het_caller.py    # Core algorithm tests
+├── web/                  # Operations console (HTML)
+├── Dockerfile
+├── docker-compose.yml
+└── requirements.txt
+```
+
+---
+
+## 📄 License
+
+MIT License — see [LICENSE](LICENSE).

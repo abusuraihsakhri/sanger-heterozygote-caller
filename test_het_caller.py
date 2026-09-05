@@ -244,5 +244,33 @@ class TestReferenceMapping(unittest.TestCase):
         self.assertEqual(mapping, [])
 
 
+class TestParseAb1ErrorHandling(unittest.TestCase):
+    """Tests for graceful error handling when ABIF raw data is malformed."""
+
+    def test_missing_abif_raw_raises_value_error(self):
+        record = object()  # no annotations attribute at all
+        with self.assertRaises(ValueError):
+            parse_ab1(record)
+
+    def test_missing_fwo_tag_raises_value_error(self):
+        raw = {
+            "DATA9": [20.0] * 50,
+            "DATA10": [20.0] * 50,
+            "DATA11": [20.0] * 50,
+            "DATA12": [20.0] * 50,
+            "PLOC2": [10],
+            "PBAS2": b"A",
+        }
+        # Missing FWO_1 tag entirely
+        record = FakeRecord(raw)
+        with self.assertRaises(ValueError):
+            parse_ab1(record)
+
+    def test_empty_abif_raw_raises_value_error(self):
+        record = FakeRecord({})
+        with self.assertRaises(ValueError):
+            parse_ab1(record)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
