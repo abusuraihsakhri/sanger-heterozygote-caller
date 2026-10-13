@@ -125,3 +125,20 @@ def test_phi_guard_empty_and_none_safe():
     PHIGuard.assert_no_phi("")
     PHIGuard.assert_no_phi("   ")
     PHIGuard.assert_no_phi("ACGTACGT")  # pure sequence
+
+
+def test_signed_audit_record_revalidation():
+    trail = AuditTrail(secret_key="unit-key")
+    trail.log("test", "system", "CHECK", {"count": 1})
+    assert trail.verify_integrity()
+    trail.logs[-1]["event_type"] = "OTHER"
+    assert not trail.verify_integrity()
+
+
+def test_csv_boolean_parser():
+    from cli import parse_bool
+    assert not parse_bool("False")
+    assert not parse_bool("0")
+    assert parse_bool("true")
+    with pytest.raises(ValueError):
+        parse_bool("unknown")
