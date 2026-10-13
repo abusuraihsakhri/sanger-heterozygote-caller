@@ -37,6 +37,8 @@ IUPAC_CODES = {
 def iupac_code(bases: Sequence[str]) -> str:
     """Return the IUPAC ambiguity code for a set of one or more unique bases."""
     unique = frozenset(b.upper() for b in bases)
+    if not unique or not unique.issubset({"A", "C", "G", "T"}):
+        raise ValueError(f"Invalid DNA base set: {sorted(unique)}")
     if len(unique) == 1:
         return next(iter(unique))
     code = IUPAC_CODES.get(unique)
@@ -88,13 +90,24 @@ def parse_ab1(record) -> TraceData:
         raise ValueError(f"ABIF raw data is missing required 'FWO_1' (base order) tag: {exc}") from exc
     if isinstance(base_order, bytes):
         base_order = base_order.decode("ascii")
+    base_order = str(base_order).upper().strip("\x00")
+    if len(base_order) != 4 or set(base_order) != set("ACGT"):
+        raise ValueError("FWO_1 must contain A, C, G, T exactly once")
 
     # DATA9-12 are the "analyzed" (baseline-subtracted) traces, in the
     # channel order given by FWO_1. DATA1-4 hold the unprocessed raw traces.
     data_tags = ["DATA9", "DATA10", "DATA11", "DATA12"]
     channels = {}
-    for base, tag in zip(base_order, data_tags):
-        channels[base] = np.asarray(raw[tag], dtype=np.float64)
+    try:
+        for base, tag in zip(base_order, data_tags):
+            channels[base] = np.asarray(raw[tag], dtype=np.float64)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid or missing analyzed DATA9–12 channel: {exc}") from exc
+    lengths = {len(ch) for ch in channels.values()}
+    if len(lengths) != 1 or not lengths or min(lengths) == 0:
+        raise ValueError("All four analyzed trace channels must be nonempty and equal length")
+    if any(not np.isfinite(ch).all() for ch in channels.values()):
+        raise ValueError("Trace intensities must be finite")
 
     # PLOC2 holds the (base-caller-finalized) peak locations; fall back to PLOC1.
     ploc_tag = "PLOC2" if "PLOC2" in raw else "PLOC1"
@@ -113,6 +126,15 @@ def parse_ab1(record) -> TraceData:
         qualities = [int(b) for b in qual_raw]
     else:
         qualities = [int(q) for q in qual_raw]
+
+    if len(called_bases) != len(peak_locations):
+        raise ValueError("PBAS and PLOC base counts disagree")
+    if len(qualities) != len(peak_locations):
+        raise ValueError("PCON and PLOC base counts disagree")
+    if any(p < 0 or p >= next(iter(lengths)) for p in peak_locations):
+        raise ValueError("PLOC contains a location outside the trace")
+    if any(base.upper() not in "ACGTN" for base in called_bases):
+        raise ValueError("PBAS contains an unsupported base")
 
     sample_name = getattr(record, "id", "") or ""
 
@@ -134,13 +156,21 @@ def call_peaks(trace: TraceData, threshold: float = 0.25, window: int = 2) -> Li
     tallest channels in that window become the primary and secondary peak;
     a position is flagged when secondary_height / primary_height >= threshold.
     """
-    if not 0.0 < threshold <= 1.0:
-        raise ValueError("threshold must be in (0, 1]")
-    if window < 0:
-        raise ValueError("window must be >= 0")
-
-    bases = sorted(trace.channels.keys())
-    n_points = len(trace.channels[bases[0]]) if bases else 0
+    if not np.isfinite(threshold) or not 0.0 < threshold <= 1.0:
+        raise ValueError("threshold must be finite and in (0, 1]")
+    if not isinstance(window, int) or window < 0:
+        raise ValueError("window must be a nonnegative integer")
+    if set(trace.channels) != set("ACGT"):
+        raise ValueError("A trace must contain exactly the A, C, G and T channels")
+    bases = sorted(trace.channels)
+    sizes = {len(trace.channels[b]) for b in bases}
+    if len(sizes) != 1 or not sizes or min(sizes) == 0:
+        raise ValueError("Trace channels must be nonempty and equal length")
+    n_points = next(iter(sizes))
+    if len(trace.peak_locations) != len(trace.called_bases) or len(trace.qualities) != len(trace.peak_locations):
+        raise ValueError("Base calls, qualities and peak locations must have equal lengths")
+    if any(loc < 0 or loc >= n_points for loc in trace.peak_locations):
+        raise ValueError("Peak location outside trace bounds")
 
     calls: List[PeakCall] = []
     for i, (loc, called_base) in enumerate(zip(trace.peak_locations, trace.called_bases)):
@@ -150,7 +180,7 @@ def call_peaks(trace: TraceData, threshold: float = 0.25, window: int = 2) -> Li
         heights = {}
         for base in bases:
             segment = trace.channels[base][lo:hi]
-            heights[base] = float(segment.max()) if segment.size else 0.0
+            heights[base] = max(0.0, float(segment.max())) if segment.size else 0.0
 
         ranked = sorted(heights.items(), key=lambda kv: kv[1], reverse=True)
         primary_base, primary_height = ranked[0]
@@ -224,6 +254,10 @@ def map_flagged_to_reference(
     context: int = 5,
 ) -> List[dict]:
     """Align the called sequence to a reference and report flagged variants in reference coordinates."""
+    if context < 0:
+        raise ValueError("context must be nonnegative")
+    if not reference_sequence or not query_sequence:
+        raise ValueError("Reference and query sequences must be nonempty")
     alignment = align_to_reference(query_sequence, reference_sequence)
     indices = alignment.indices  # shape (2, ncols): row 0 = reference index or -1, row 1 = query index or -1
 
