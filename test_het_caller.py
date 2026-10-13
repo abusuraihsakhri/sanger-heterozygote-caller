@@ -272,5 +272,62 @@ class TestParseAb1ErrorHandling(unittest.TestCase):
             parse_ab1(record)
 
 
+
+class TestInvalidInputRegression(unittest.TestCase):
+    def test_single_unsupported_base_rejected(self):
+        with self.assertRaises(ValueError):
+            iupac_code(["Z"])
+        with self.assertRaises(ValueError):
+            iupac_code([])
+
+    def test_invalid_trace_lengths_are_rejected(self):
+        trace = make_trace("AC", [500, 500])
+        trace.channels["G"] = trace.channels["G"][:-1]
+        with self.assertRaisesRegex(ValueError, "equal length"):
+            call_peaks(trace)
+
+    def test_peak_beyond_trace_bounds_rejected(self):
+        trace = make_trace("AC", [500, 500])
+        trace.peak_locations[0] = -4
+        with self.assertRaisesRegex(ValueError, "outside trace bounds"):
+            call_peaks(trace)
+
+    def test_nan_threshold_rejected(self):
+        trace = make_trace("A", [500])
+        with self.assertRaises(ValueError):
+            call_peaks(trace, threshold=float("nan"))
+
+    def test_invalid_fwo_raises_error(self):
+        raw = {
+            "FWO_1": b"AAAA",
+            "DATA9": [1], "DATA10": [1], "DATA11": [1], "DATA12": [1],
+            "PLOC2": [0], "PBAS2": b"A",
+        }
+        with self.assertRaisesRegex(ValueError, "FWO_1"):
+            parse_ab1(FakeRecord(raw))
+
+    def test_mismatched_pbas_ploc_rejected(self):
+        raw = {
+            "FWO_1": b"ACGT",
+            "DATA9": [1, 2], "DATA10": [1, 2],
+            "DATA11": [1, 2], "DATA12": [1, 2],
+            "PLOC2": [1], "PBAS2": b"AC",
+        }
+        with self.assertRaisesRegex(ValueError, "base counts disagree"):
+            parse_ab1(FakeRecord(raw))
+
+    def test_negative_intensities_not_reported_as_peaks(self):
+        trace = make_trace("A", [500])
+        trace.channels["C"][:] = -50
+        trace.channels["G"][:] = -50
+        trace.channels["T"][:] = -50
+        self.assertFalse(call_peaks(trace)[0].flagged)
+
+    def test_reference_context_nonnegative(self):
+        trace = make_trace("A", [500], secondary={0: ("G", 200)})
+        with self.assertRaisesRegex(ValueError, "context"):
+            map_flagged_to_reference(call_peaks(trace), "A", "A", context=-1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

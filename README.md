@@ -1,185 +1,72 @@
 # Sanger Heterozygote Caller
 
-> **Domain:** Clinical Decision Support & Biomedical Computing  
-> **Standards:** CAP / CLSI / ISO Quality Frameworks
+Screen candidate mixed-base positions in Sanger AB1 chromatograms using analyzed four-channel peak heights. Provides a **local browser interface** and a **Python command-line tool** with optional reference alignment.
 
-<div align="center">
+The browser interface is [web/index.html](web/index.html); the repository root includes a GitHub Pages entry page. **Live deployment has not yet been independently verified.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688.svg?logo=fastapi&logoColor=white)
-![Audit Trail](https://img.shields.io/badge/Audit-HMAC--SHA256_Tamper--Evident-brightgreen.svg)
-![Zero-PHI Guard](https://img.shields.io/badge/Guard-Zero--PHI_Outbound-blue.svg)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)
+## Features
 
-</div>
+- Parse ABIF tags DATA9–DATA12 (analyzed trace), FWO_1 (dye order), PLOC2/PLOC1 (peak locations), PBAS2/PBAS1 (base calls), and PCON2/PCON1 (quality).
+- Evaluate a configurable secondary-to-primary peak-height threshold near each called base.
+- Apply optional instrument-provided Phred quality filtering.
+- Flag candidate A/C/G/T mixtures using two-base IUPAC codes.
+- Plot four local fluorescence channels and download flagged calls as CSV or JSON in the browser.
+- Optionally align Python CLI calls to a single-sequence FASTA reference or a DNA reference string.
 
----
+**Scientific limitation:** This is a peak-ratio *screen*, not a validated genotyping assay. Secondary signals can arise from background, artifacts, dye effects, or biological mixture. A ratio alone does not establish heterozygosity, mosaic fraction, or clinical significance. Review chromatograms and obtain orthogonal confirmation where appropriate. The Python API's reported SNR is a heuristic ratio to the bottom-quartile baseline and is not a calibrated analytical SNR.
 
-## 📖 What It Does
+## Browser usage
 
-Sanger Heterozygote Caller flags heterozygous and low-level mosaic positions in Sanger `.ab1` chromatograms using a secondary-to-primary fluorescence peak-height ratio heuristic (similar to Mutation Surveyor / Poly Peak Parser). It also provides an enterprise multi-agent supervision layer with HMAC-SHA256 audit trails and zero-PHI outbound guards.
+Open [web/index.html](web/index.html) from a local HTTP server or correctly configured GitHub Pages deployment. Select an AB1 chromatogram, adjust the ratio threshold, peak radius and minimum quality, and press **Analyze trace**. Select **Load example** for explicitly synthetic data. Inspect candidate rows and plots, then export JSON or CSV.
 
-### Two Entry Points
+**Privacy:** The browser processes the file locally in JavaScript. It does not upload the file or make API calls. Following the repository hyperlink navigates to GitHub. The Python CLI also reads local files. The optional **separate** FastAPI server processes data submitted to its endpoints and should not be exposed publicly without appropriate security controls.
 
-1. **Core algorithm** — call heterozygote positions from an `.ab1` file:
-   ```bash
-   python -m het_caller.cli <file.ab1> [options]
-   ```
+The browser uses a compact JavaScript ABIF parser rather than Pyodide, avoiding a heavyweight Python/WebAssembly runtime. The Python implementation remains available for CLI analysis and reference mapping. Check consistency against real chromatogram fixtures before using either workflow in a validated laboratory process.
 
-2. **Enterprise CLI** — multi-agent task evaluation, batch processing, and REST API:
-   ```bash
-   python cli.py <command> [options]
-   ```
+## Python CLI
 
----
+Python 3.10 or later is recommended.
 
-## ⚙️ Core Algorithm (`het_caller/`)
+    python -m pip install -r requirements.txt
+    python -m het_caller.cli sample.ab1 --threshold 0.25 --window 2 --min-quality 20 --output results.json
+    python -m het_caller.cli sample.ab1 --reference reference.fasta --context 5 --output aligned.json
 
-Implements the peak-ratio heuristic described by Hill et al., *BioTechniques* 2014:
+| Option | Purpose | Default |
+| --- | --- | --- |
+| --threshold | Minimum second-to-first ratio (greater than 0, up to 1) | 0.25 |
+| --window | Peak search radius in trace samples | 2 |
+| --min-quality | Exclude calls below instrument quality | 0 (off) |
+| --reference | Single FASTA sequence path or DNA string | Not set |
+| --context | Reference flanking bases | 5 |
+| --output | Write JSON rather than console text | Standard output |
 
-- **Four-channel trace parsing** from ABIF `DATA9-12` tags.
-- **Peak detection** with a configurable window around each called base.
-- **Heterozygote flagging** when a secondary channel exceeds `threshold` × primary height.
-- **IUPAC ambiguity code** assignment (e.g. `R` = A/G, `Y` = C/T).
-- **Reference alignment** (BioPython `PairwiseAligner`) for reporting variants in reference coordinates.
-- **Quality summary** with estimated signal-to-noise ratio.
+Python flagged_positions are **0-based**; reference coordinates and the browser table/export are **1-based**.
 
-### Parameters
+## Optional API and supervisory CLI
 
-| Flag | Description | Default |
-|:-----|:------------|:--------|
-| `ab1_file` | Path to input `.ab1` chromatogram | (required) |
-| `--threshold` | Min secondary/primary ratio to flag | 0.25 |
-| `--window` | +/- samples around peak for local max | 2 |
-| `--min-quality` | Ignore bases below this Phred score | 0 (off) |
-| `--reference` | FASTA file or raw sequence to align against | None |
-| `--context` | Flanking bases shown around variants | 5 |
-| `--output` | Write JSON report to file | stdout text |
+    python cli.py audit --task-id TEST-01 --primary 28.5 --secondary 14.2
+    python cli.py batch --input tasks.csv --output results.csv
+    python cli.py verify-audit
+    python cli.py serve --host 127.0.0.1 --port 8000
 
-### Example
+FastAPI routes include /health, /metrics, /api/audit, /api/chat, and /api/audit/logs. **The API cannot run on GitHub Pages.** This subsystem evaluates generic numerical threshold rules and is separate from chromatogram analysis. Provider selection currently resolves to deterministic mock responses; it does not conduct remote model inference.
 
-```bash
-python -m het_caller.cli sample.ab1 --threshold 0.25 --window 2 --reference ref.fasta --output report.json
-```
+The PHI regex guard is only a limited pattern detector, **not** comprehensive de-identification or a compliance guarantee. The audit entries are HMAC-signed and chained but stored in memory. Set AUDIT_SECRET_KEY to use a stable signing key; persistence and key management are needed for production auditability.
 
----
+## Development and tests
 
-## ⚙️ Enterprise CLI (`cli.py`)
+    python -m pip install -r requirements.txt pytest
+    python -m pytest -q
+    python -m compileall -q het_caller agents cli.py enrichment.py simulator.py
+    node --check web/abif.js
+    node --check web/app.js
+    node --test tests/web.test.cjs
+    python -m http.server 8000
 
-### Commands
+Then visit http://localhost:8000/web/. CI covers Python 3.10–3.12 and browser binary parsing with Node 22. Real instrument files and multiple mobile browsers should still be tested.
 
-| Command | Description |
-|:--------|:------------|
-| `audit` | Run single task evaluation with multi-agent consensus |
-| `chat` | Query the supervisory chat interface |
-| `batch` | Batch process CSV records |
-| `verify-audit` | Verify HMAC audit trail integrity |
-| `serve` | Launch FastAPI REST server |
+## Technology and license
 
-### Examples
+Python, NumPy, Biopython, FastAPI, Pydantic, plain JavaScript, HTML and CSS. Modern browsers need File.arrayBuffer, DataView and Canvas. No build step is required to serve the static browser UI.
 
-```bash
-# Single task evaluation
-python cli.py audit --task-id TASK-001 --primary 28.5 --secondary 14.2 --critical
-
-# Supervisory chat
-python cli.py chat "Explain the current protocol status"
-
-# Batch processing
-python cli.py batch -i input.csv -o results.csv
-
-# Verify audit integrity
-python cli.py verify-audit
-
-# Start REST server
-python cli.py serve --host 127.0.0.1 --port 8000
-```
-
----
-
-## 🛡️ Security & Enterprise Architecture
-
-* **Zero-PHI Outbound Interceptor:** Active regex inspection blocking SSNs, MRNs, phone numbers, emails, DOBs, and patient identifiers.
-* **Tamper-Evident HMAC-SHA256 Audit Trail:** Chained, cryptographically signed logs for every evaluation.
-* **Configurable Audit Secret:** Set `AUDIT_SECRET_KEY` environment variable in production; ephemeral key generated at runtime with a warning if unset.
-* **Path Traversal Protection:** Reference file paths are resolved to absolute paths before access.
-
----
-
-## 🧪 Testing & Verification
-
-Run the full test suite:
-
-```bash
-pytest -v
-```
-
-This executes 18 tests covering:
-- IUPAC code assignment
-- Peak calling and heterozygote flagging
-- Trace quality summary
-- AB1 parsing with fallbacks
-- Reference alignment and variant mapping
-- PHI guard enforcement
-- Multi-agent worker evaluation
-- Supervisor consensus and audit integrity
-- Enrichment suite execution
-
----
-
-## 🐳 Container Deployment
-
-```bash
-docker build -t sanger-heterozygote-caller .
-docker run -p 8000:8000 -e AUDIT_SECRET_KEY=<your-secret> sanger-heterozygote-caller
-```
-
-Or with Docker Compose:
-
-```bash
-AUDIT_SECRET_KEY=<your-secret> docker-compose up
-```
-
----
-
-## 📦 Dependencies
-
-- `biopython>=1.80` — ABIF trace parsing, sequence alignment
-- `numpy>=1.24` — numerical array operations
-- `pydantic>=2.0` — data models (enterprise CLI)
-- `fastapi`, `uvicorn` — REST API server
-- `pytest` — test suite
-
----
-
-## 📁 Project Structure
-
-```
-sanger-heterozygote-caller/
-├── het_caller/           # Core algorithm package
-│   ├── core.py           # Peak-ratio calling, AB1 parsing, alignment
-│   └── cli.py            # Core algorithm CLI
-├── agents/               # Enterprise multi-agent framework
-│   ├── base.py           # PHI guard, HMAC audit trail
-│   ├── models.py         # Pydantic data models
-│   ├── workers.py        # Domain worker agents
-│   ├── supervisor.py     # Consensus orchestrator
-│   ├── api.py            # FastAPI endpoints
-│   └── ...
-├── cli.py                # Enterprise CLI entry point
-├── enrichment.py         # Batch screening & enrichment engines
-├── simulator.py          # High-throughput simulation
-├── tests/                # Pytest test suite
-├── test_het_caller.py    # Core algorithm tests
-├── web/                  # Operations console (HTML)
-├── Dockerfile
-├── docker-compose.yml
-└── requirements.txt
-```
-
----
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE).
+MIT license; see [LICENSE](LICENSE).

@@ -68,10 +68,18 @@ def _load_reference(spec: str) -> str:
         with open(abs_path) as handle:
             text = handle.read()
         if text.lstrip().startswith(">"):
-            lines = text.splitlines()[1:]
-            return "".join(line.strip() for line in lines)
-        return "".join(text.split())
-    return "".join(spec.split())
+            records = list(SeqIO.parse(abs_path, "fasta"))
+            if len(records) != 1:
+                raise ValueError("Reference FASTA must contain exactly one sequence")
+            sequence = str(records[0].seq)
+        else:
+            sequence = "".join(text.split())
+    else:
+        sequence = "".join(spec.split())
+    sequence = sequence.upper()
+    if not sequence or any(c not in "ACGTN" for c in sequence):
+        raise ValueError("Reference must be a nonempty DNA sequence (A/C/G/T/N)")
+    return sequence
 
 
 def _build_report(trace, calls, summary, args) -> dict:
@@ -82,7 +90,7 @@ def _build_report(trace, calls, summary, args) -> dict:
             "window": args.window,
             "min_quality": args.min_quality,
         },
-        "summary": summary,
+        "summary": {**summary, "num_total_bases": len(trace.called_bases)},
         "flagged_positions": [
             {
                 "position": c.position,
@@ -113,7 +121,7 @@ def _print_text_report(report: dict) -> None:
     summary = report["summary"]
     print(f"Sample: {report['sample'] or '(unnamed)'}")
     print(
-        f"Bases called: {summary['num_bases']}  |  "
+        f"Bases reviewed: {summary['num_bases']} / {summary['num_total_bases']}  |  "
         f"Flagged positions: {summary['num_flagged']}  |  "
         f"SNR: {summary['signal_to_noise_ratio']}"
     )
@@ -150,27 +158,32 @@ def _print_text_report(report: dict) -> None:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
+    if args.min_quality < 0 or args.context < 0:
+        print("min-quality and context must be nonnegative", file=sys.stderr)
+        return 2
     try:
         record = SeqIO.read(args.ab1_file, "abi")
-    except Exception as exc:  # noqa: BLE001 - surface parse errors as a clean CLI failure
-        print(f"Error reading '{args.ab1_file}': {exc}", file=sys.stderr)
+        trace = parse_ab1(record)
+        calls = call_peaks(trace, threshold=args.threshold, window=args.window)
+    except (OSError, ValueError, KeyError, IndexError) as exc:
+        print(f"Error processing '{args.ab1_file}': {exc}", file=sys.stderr)
         return 1
-
-    trace = parse_ab1(record)
-    calls = call_peaks(trace, threshold=args.threshold, window=args.window)
 
     if args.min_quality:
         calls = [c for c in calls if trace.qualities[c.position] >= args.min_quality]
 
     summary = trace_quality_summary(trace, calls)
-    report = _build_report(trace, calls, summary, args)
-
-    if args.output:
-        with open(args.output, "w") as f:
-            json.dump(report, f, indent=2)
-        print(f"Report written to {args.output}")
-    else:
-        _print_text_report(report)
+    try:
+        report = _build_report(trace, calls, summary, args)
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2)
+            print(f"Report written to {args.output}")
+        else:
+            _print_text_report(report)
+    except (OSError, ValueError) as exc:
+        print(f"Error generating report: {exc}", file=sys.stderr)
+        return 1
 
     return 0
 

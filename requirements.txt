@@ -1,2 +1,5 @@
-biopython>=1.80
-numpy>=1.24
+biopython>=1.80,<2
+numpy>=1.24,<3
+pydantic>=2.6,<3
+fastapi>=0.110,<1
+uvicorn>=0.25,<1
