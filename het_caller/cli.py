@@ -90,7 +90,7 @@ def _build_report(trace, calls, summary, args) -> dict:
             "window": args.window,
             "min_quality": args.min_quality,
         },
-        "summary": summary,
+        "summary": {**summary, "num_total_bases": len(trace.called_bases)},
         "flagged_positions": [
             {
                 "position": c.position,
@@ -121,7 +121,7 @@ def _print_text_report(report: dict) -> None:
     summary = report["summary"]
     print(f"Sample: {report['sample'] or '(unnamed)'}")
     print(
-        f"Bases called: {summary['num_bases']}  |  "
+        f"Bases reviewed: {summary['num_bases']} / {summary['num_total_bases']}  |  "
         f"Flagged positions: {summary['num_flagged']}  |  "
         f"SNR: {summary['signal_to_noise_ratio']}"
     )
